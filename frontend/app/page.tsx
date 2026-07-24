@@ -86,7 +86,9 @@ const KEYWORDS = [
   "Holographic Sight",
   "LWIR",
   "MWIR",
+  "LWIR / MWIR",
   "Target Acquisition System",
+  "Night vision Camera",
 ];
 
 function unique(values: Array<string | undefined>): string[] {

@@ -21,6 +21,7 @@ export const KEYWORDS: string[] = [
   "Cooled Thermal",
   "LWIR",
   "MWIR",
+  "LWIR / MWIR",
   "Handheld Thermal Imager",
   "Target Acquisition System",
   "Laser Range Finder (LRF) integrated sight",
@@ -32,6 +33,7 @@ export const KEYWORDS: string[] = [
   "Pan Tilt Zoom Camera (PTZ with EO payload)",
   "Optical Camera",
   "Night Vision Camera",
+  "Night vision Camera",
   "Laser Range Finder",
   "LOROS",
   "Long Range Observation System",
@@ -57,16 +59,20 @@ export const KEYWORDS: string[] = [
  */
 export function matchKeywords(text: string): string[] {
   if (!text) return [];
-  const haystack = text.toLowerCase();
+  const haystack = normalizeForKeywordMatch(text);
   const matches: string[] = [];
 
   for (const keyword of KEYWORDS) {
-    const needle = keyword.toLowerCase();
+    const needle = normalizeForKeywordMatch(keyword);
     if (haystack.includes(needle)) {
       matches.push(keyword);
     }
   }
   return matches;
+}
+
+function normalizeForKeywordMatch(value: string): string {
+  return value.toLowerCase().replace(/[^\w]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 /** Comma-joined string for storage in Tender.keywordMatched, or null if none. */
