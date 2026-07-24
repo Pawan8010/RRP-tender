@@ -233,9 +233,9 @@ export default function Home() {
             <div style={eyebrowStyle}>
               <ShieldCheck size={16} /> GeM Portal Only
             </div>
-            <h1 style={{ fontSize: 48, lineHeight: 1, margin: "12px 0" }}>GeM Tender Scraper & PostgreSQL Search</h1>
+            <h1 style={{ fontSize: 48, lineHeight: 1, margin: "12px 0" }}>RRP Groups Tender Search</h1>
             <p style={{ color: "#a8b3c7", maxWidth: 760 }}>
-              Scrapes every active public tender from GeM, stores records in PostgreSQL via Prisma, and shows searchable live results in this UI.
+              Scrapes every active public tender from GeM, stores records in PostgreSQL via Prisma, and shows searchable live results for RRP Groups.
             </p>
           </div>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>

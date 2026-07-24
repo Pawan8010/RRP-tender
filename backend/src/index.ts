@@ -47,7 +47,7 @@ async function main() {
   app.use(errorHandler);
 
   const server = app.listen(config.port, () => {
-    logger.info(`GeM Tender Intelligence API listening on port ${config.port}`);
+    logger.info(`RRP Groups GeM Tender API listening on port ${config.port}`);
   });
 
   startScheduler();

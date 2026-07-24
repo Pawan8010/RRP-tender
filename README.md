@@ -1,6 +1,6 @@
-# RRP Tender - GeM Tender Scraper & Search
+# RRP Groups - GeM Tender Scraper & Search
 
-Full-stack GeM tender scraper and search platform. It scrapes active public tenders from the GeM bid portal, stores them in PostgreSQL, and provides a searchable Next.js UI with live GeM search syncing.
+RRP Groups is a full-stack GeM tender scraper and search platform. It scrapes active public tenders from the GeM bid portal, stores them in PostgreSQL, and provides a searchable Next.js UI with live GeM search syncing.
 
 ## Features
 
@@ -253,4 +253,3 @@ Docker:
 ```bash
 docker compose up --build
 ```
-

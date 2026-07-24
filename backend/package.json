@@ -1,8 +1,8 @@
 {
-  "name": "gem-tender-backend",
+  "name": "rrp-groups-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "Scraper + API backend for the GeM Tender Intelligence Platform",
+  "description": "Scraper + API backend for RRP Groups GeM tender search",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
