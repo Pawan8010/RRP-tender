@@ -1,0 +1,58 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gem_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gem_user
+      POSTGRES_PASSWORD: gem_password
+      POSTGRES_DB: gem_tenders
+    ports:
+      - "5432:5432"
+    volumes:
+      - gem_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gem_user -d gem_tenders"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    container_name: gem_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://gem_user:gem_password@postgres:5432/gem_tenders?schema=public
+      PORT: 4000
+      NODE_ENV: production
+      SCRAPE_CRON: "0 */6 * * *"
+      SCRAPER_HEADLESS: "true"
+      GEM_BASE_URL: https://bidplus.gem.gov.in
+      SCRAPER_MAX_PAGES: "0"
+      SCRAPER_REQUEST_DELAY_MS: "50"
+      SCRAPER_API_CONCURRENCY: "24"
+    ports:
+      - "4000:4000"
+    command: sh -c "npx prisma migrate deploy && node dist/index.js"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: gem_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:4000/api
+    ports:
+      - "3000:3000"
+
+volumes:
+  gem_pg_data:

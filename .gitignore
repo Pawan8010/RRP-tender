@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.next/
+.env
+.env.local
+*.log
+server.out.log
+server.err.log
+web.out.log
+gem_body.html
+gem_headers.txt
+scratch.html
+start-backend.bat
+start-backend.ps1
+start-frontend.bat
+start-frontend.ps1
+

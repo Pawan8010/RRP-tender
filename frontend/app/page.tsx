@@ -1,0 +1,339 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { AlertCircle, CalendarDays, Database, ExternalLink, Loader2, RefreshCw, Search, ShieldCheck } from "lucide-react";
+
+type Tender = {
+  id: string;
+  tenderId: string;
+  title: string;
+  organisation?: string | null;
+  department?: string | null;
+  category?: string | null;
+  keywordMatched?: string | null;
+  tenderStatus: string;
+  tenderURL: string;
+  closingDate?: string | null;
+  createdAt: string;
+};
+
+type TenderResponse = {
+  data: Tender[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalItems: number;
+    totalPages: number;
+  };
+};
+
+type Stats = {
+  totalTenders: number;
+  newToday: number;
+  closingSoon: number;
+  keywordMatches: number;
+};
+
+type ScrapeResult = {
+  status: "SUCCESS" | "FAILED" | "STARTED";
+  pagesScraped: number;
+  tendersFound: number;
+  tendersNew: number;
+  tendersUpdated: number;
+  statedTotal?: number;
+};
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
+const KEYWORDS = [
+  "Thermal Camera",
+  "Thermal Weapon Sight",
+  "Thermal Imager",
+  "Night Vision Device",
+  "Night Vision Goggles",
+  "Laser Range Finder",
+  "LOROS",
+  "EOSS",
+  "Battlefield Surveillance Radar",
+  "Border Surveillance System",
+  "Reflex Sight",
+  "Red Dot Sight",
+  "Holographic Sight",
+  "Weapon Sight",
+  "LWIR",
+  "MWIR",
+  "Target Acquisition System",
+];
+
+function dateLabel(value?: string | null) {
+  if (!value) return "Not listed";
+  return new Date(value).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
+}
+
+export default function Home() {
+  const [query, setQuery] = useState("");
+  const [keyword, setKeyword] = useState("");
+  const [page, setPage] = useState(1);
+  const [tenders, setTenders] = useState<TenderResponse | null>(null);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [scraping, setScraping] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const activeSearch = keyword || query;
+  const searchUrl = useMemo(() => {
+    const params = new URLSearchParams({ page: String(page), pageSize: "50", sort: "recently_updated" });
+    if (activeSearch) params.set("q", activeSearch);
+    return `${API_BASE}/tenders?${params.toString()}`;
+  }, [activeSearch, page]);
+
+  async function loadData() {
+    setLoading(true);
+    try {
+      const [tenderRes, statsRes] = await Promise.all([
+        fetch(searchUrl, { cache: "no-store" }),
+        fetch(`${API_BASE}/tenders/stats`, { cache: "no-store" }),
+      ]);
+      if (!tenderRes.ok) throw new Error(`Tender API returned ${tenderRes.status}`);
+      if (!statsRes.ok) throw new Error(`Stats API returned ${statsRes.status}`);
+      setTenders(await tenderRes.json());
+      setStats(await statsRes.json());
+      setMessage(null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to load API data");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function triggerScrape() {
+    setScraping(true);
+    setMessage("Scraping GeM now. Full scrape can take time because GeM has thousands of active bids.");
+    try {
+      const response = await fetch(`${API_BASE}/scrape`, { method: "POST" });
+      const result = (await response.json()) as ScrapeResult;
+      if (!response.ok || (result.status !== "SUCCESS" && result.status !== "STARTED")) {
+        throw new Error(`Scrape failed after ${result.pagesScraped || 0} pages`);
+      }
+      setMessage(result.status === "STARTED" ? "Scrape started in background. Results will appear here as pages are saved." : `Scrape complete: ${result.tendersFound} found, ${result.tendersNew} new, ${result.tendersUpdated} updated. GeM stated total: ${result.statedTotal ?? "unknown"}.`);
+      await loadData();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Scrape failed");
+    } finally {
+      setScraping(false);
+    }
+  }
+
+  async function waitForScrapeToFinish() {
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      const response = await fetch(`${API_BASE}/scrape/status`, { cache: "no-store" });
+      if (!response.ok) return;
+      const status = await response.json();
+      await loadData();
+      if (!status.inProgress) return;
+    }
+  }
+
+  async function triggerNewTenderScrape() {
+    setScraping(true);
+    setMessage("Checking latest GeM pages for newly published tenders.");
+    try {
+      const response = await fetch(`${API_BASE}/scrape/new`, { method: "POST" });
+      if (!response.ok) throw new Error(`New tender scrape failed with HTTP ${response.status}`);
+      setMessage("New tender scrape started. Fresh records will appear automatically while it runs.");
+      await waitForScrapeToFinish();
+      await loadData();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "New tender scrape failed");
+    } finally {
+      setScraping(false);
+    }
+  }
+
+  useEffect(() => {
+    loadData();
+    const timer = window.setInterval(loadData, 15000);
+    return () => window.clearInterval(timer);
+  }, [searchUrl]);
+
+  return (
+    <main style={{ minHeight: "100vh", padding: "32px 20px" }}>
+      <section style={{ maxWidth: 1200, margin: "0 auto" }}>
+        <header style={panelStyle}>
+          <div>
+            <div style={eyebrowStyle}>
+              <ShieldCheck size={16} /> GeM Portal Only
+            </div>
+            <h1 style={{ fontSize: 48, lineHeight: 1, margin: "12px 0" }}>GeM Tender Scraper & PostgreSQL Search</h1>
+            <p style={{ color: "#a8b3c7", maxWidth: 760 }}>
+              Scrapes every active public tender from GeM, stores records in PostgreSQL via Prisma, and shows searchable live results in this UI.
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <button onClick={triggerScrape} disabled={scraping} style={primaryButtonStyle}>
+              {scraping ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
+              Scrape All GeM Tenders
+            </button>
+            <button onClick={triggerNewTenderScrape} disabled={scraping} style={secondaryButtonStyle}>
+              Scrape New Tenders
+            </button>
+          </div>
+        </header>
+
+        <section style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 16, margin: "24px 0" }}>
+          <Stat title="Stored Tenders" value={stats?.totalTenders ?? 0} icon={<Database size={20} />} />
+          <Stat title="New Today" value={stats?.newToday ?? 0} icon={<RefreshCw size={20} />} />
+          <Stat title="Closing Soon" value={stats?.closingSoon ?? 0} icon={<CalendarDays size={20} />} />
+          <Stat title="Keyword Matches" value={stats?.keywordMatches ?? 0} icon={<Search size={20} />} />
+        </section>
+
+        <section style={panelStyle}>
+          <div style={{ display: "flex", gap: 12 }}>
+            <div style={{ position: "relative", flex: 1 }}>
+              <Search size={20} style={{ position: "absolute", left: 16, top: 15, color: "#64748b" }} />
+              <input
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setKeyword("");
+                  setPage(1);
+                }}
+                placeholder="Search by bid number, thermal camera, LRF, NVG, department..."
+                style={inputStyle}
+              />
+            </div>
+            {(query || keyword) && (
+              <button
+                onClick={() => {
+                  setQuery("");
+                  setKeyword("");
+                  setPage(1);
+                }}
+                style={secondaryButtonStyle}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16 }}>
+            {KEYWORDS.map((item) => (
+              <button
+                key={item}
+                onClick={() => {
+                  setKeyword(item);
+                  setQuery("");
+                  setPage(1);
+                }}
+                style={keyword === item ? activeChipStyle : chipStyle}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        {message && (
+          <div style={{ ...panelStyle, borderColor: message.toLowerCase().includes("failed") ? "#ef4444" : "#164e63", marginTop: 20 }}>
+            <AlertCircle size={18} /> {message}
+          </div>
+        )}
+
+        <section style={{ marginTop: 24 }}>
+          <div style={{ display: "flex", alignItems: "end", justifyContent: "space-between", gap: 16 }}>
+            <div>
+              <h2 style={{ fontSize: 24, marginBottom: 6 }}>Tender Results</h2>
+              <p style={{ color: "#94a3b8", marginTop: 0 }}>
+                {tenders ? `${tenders.pagination.totalItems.toLocaleString("en-IN")} matching tenders across PostgreSQL` : "Searching stored GeM tenders"}
+              </p>
+            </div>
+          </div>
+          {loading ? (
+            <div style={emptyStyle}><Loader2 className="spin" /> Loading tenders...</div>
+          ) : !tenders?.data.length ? (
+            <div style={emptyStyle}>No tenders found. Click scrape, then search again.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 14 }}>
+              {tenders.data.map((tender) => (
+                <article key={tender.id} style={cardStyle}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 20 }}>
+                    <div>
+                      <div style={{ color: "#67e8f9", fontFamily: "monospace", fontWeight: 700 }}>{tender.tenderId}</div>
+                      <h3 style={{ margin: "8px 0", fontSize: 20 }}>{tender.title}</h3>
+                      <p style={{ color: "#94a3b8", margin: 0 }}>
+                        {[tender.organisation, tender.department, tender.category].filter(Boolean).join(" | ") || "GeM tender"}
+                      </p>
+                    </div>
+                    <a href={tender.tenderURL} target="_blank" rel="noreferrer" style={linkButtonStyle}>
+                      Open GeM <ExternalLink size={16} />
+                    </a>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 16 }}>
+                    <span style={metaStyle}>Status: {tender.tenderStatus}</span>
+                    <span style={metaStyle}>Ends: {dateLabel(tender.closingDate)}</span>
+                    {tender.keywordMatched && <span style={metaStyle}>Matched: {tender.keywordMatched}</span>}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+          {tenders && tenders.pagination.totalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 16 }}>
+              <button disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} style={secondaryButtonStyle}>
+                Previous
+              </button>
+              <span style={{ color: "#94a3b8" }}>Page {page} of {tenders.pagination.totalPages}</span>
+              <button disabled={page >= tenders.pagination.totalPages} onClick={() => setPage((p) => p + 1)} style={secondaryButtonStyle}>
+                Next
+              </button>
+            </div>
+          )}
+        </section>
+      </section>
+      <style jsx global>{`
+        .spin { animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
+    </main>
+  );
+}
+
+function Stat({ title, value, icon }: { title: string; value: number; icon: React.ReactNode }) {
+  return (
+    <div style={statStyle}>
+      <div style={{ color: "#67e8f9" }}>{icon}</div>
+      <div style={{ color: "#94a3b8", fontSize: 12, textTransform: "uppercase", letterSpacing: 1.5 }}>{title}</div>
+      <div style={{ fontSize: 34, fontWeight: 900 }}>{value.toLocaleString("en-IN")}</div>
+    </div>
+  );
+}
+
+const panelStyle: React.CSSProperties = {
+  border: "1px solid rgba(148, 163, 184, 0.2)",
+  background: "rgba(15, 23, 42, 0.76)",
+  borderRadius: 24,
+  padding: 24,
+  boxShadow: "0 24px 80px rgba(0,0,0,.25)",
+};
+
+const statStyle: React.CSSProperties = { ...panelStyle, padding: 18 };
+const eyebrowStyle: React.CSSProperties = { display: "inline-flex", gap: 8, alignItems: "center", color: "#67e8f9", fontSize: 12, fontWeight: 800, letterSpacing: 3 };
+const primaryButtonStyle: React.CSSProperties = { display: "inline-flex", gap: 10, alignItems: "center", border: 0, borderRadius: 16, padding: "14px 18px", background: "#22d3ee", color: "#03101a", fontWeight: 900, cursor: "pointer" };
+const secondaryButtonStyle: React.CSSProperties = { border: "1px solid rgba(148, 163, 184, 0.25)", borderRadius: 14, padding: "12px 16px", background: "rgba(15, 23, 42, .8)", color: "#e2e8f0", cursor: "pointer" };
+const inputStyle: React.CSSProperties = { width: "100%", border: "1px solid rgba(148, 163, 184, 0.22)", borderRadius: 16, background: "rgba(2, 6, 23, .55)", color: "#e2e8f0", padding: "14px 16px 14px 48px", outline: "none" };
+const chipStyle: React.CSSProperties = { border: "1px solid rgba(148, 163, 184, 0.22)", borderRadius: 999, padding: "8px 12px", background: "rgba(2, 6, 23, .55)", color: "#cbd5e1", cursor: "pointer" };
+const activeChipStyle: React.CSSProperties = { ...chipStyle, background: "#22d3ee", color: "#03101a", fontWeight: 800 };
+const cardStyle: React.CSSProperties = { ...panelStyle, padding: 20 };
+const emptyStyle: React.CSSProperties = { ...panelStyle, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, color: "#94a3b8", minHeight: 140 };
+const linkButtonStyle: React.CSSProperties = {
+  ...secondaryButtonStyle,
+  display: "inline-flex",
+  gap: 8,
+  alignItems: "center",
+  justifyContent: "center",
+  textDecoration: "none",
+  height: 46,
+  minWidth: 142,
+  whiteSpace: "nowrap",
+  flexShrink: 0,
+};
+const metaStyle: React.CSSProperties = { borderRadius: 12, padding: "8px 10px", background: "rgba(2, 6, 23, .65)", color: "#cbd5e1", fontSize: 13 };
