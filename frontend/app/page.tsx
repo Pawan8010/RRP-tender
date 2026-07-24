@@ -30,6 +30,7 @@ type TenderResponse = {
     gemStatedTotal?: number;
     gemUniqueStored?: number;
     gemSearchedAt?: string;
+    gemSearchTerms?: string[];
   };
 };
 
@@ -111,7 +112,7 @@ function dateLabel(value?: string | null) {
 export default function Home() {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [keyword, setKeyword] = useState("");
+  const [selectedKeywords, setSelectedKeywords] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [tenders, setTenders] = useState<TenderResponse | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -119,7 +120,8 @@ export default function Home() {
   const [scraping, setScraping] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const activeSearch = keyword || debouncedQuery;
+  const keywordSearch = selectedKeywords.join(" || ");
+  const activeSearch = debouncedQuery || keywordSearch;
   const searchPath = useMemo(() => {
     const params = new URLSearchParams({ page: String(page), pageSize: "50", sort: "recently_updated" });
     if (activeSearch) params.set("q", activeSearch);
@@ -133,6 +135,15 @@ export default function Home() {
     }, 800);
     return () => window.clearTimeout(timer);
   }, [query]);
+
+  function toggleKeyword(item: string) {
+    setQuery("");
+    setDebouncedQuery("");
+    setSelectedKeywords((current) =>
+      current.includes(item) ? current.filter((keyword) => keyword !== item) : [...current, item]
+    );
+    setPage(1);
+  }
 
   async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
     let lastError: unknown;
@@ -259,19 +270,19 @@ export default function Home() {
                 value={query}
                 onChange={(event) => {
                   setQuery(event.target.value);
-                  setKeyword("");
+                  setSelectedKeywords([]);
                   setPage(1);
                 }}
                 placeholder="Search by bid number, thermal camera, LRF, NVG, department..."
                 style={inputStyle}
               />
             </div>
-            {(query || keyword) && (
+            {(query || selectedKeywords.length > 0) && (
               <button
                 onClick={() => {
                   setQuery("");
                   setDebouncedQuery("");
-                  setKeyword("");
+                  setSelectedKeywords([]);
                   setPage(1);
                 }}
                 style={secondaryButtonStyle}
@@ -284,17 +295,18 @@ export default function Home() {
             {KEYWORDS.map((item) => (
               <button
                 key={item}
-                onClick={() => {
-                  setKeyword(item);
-                  setQuery("");
-                  setPage(1);
-                }}
-                style={keyword === item ? activeChipStyle : chipStyle}
+                onClick={() => toggleKeyword(item)}
+                style={selectedKeywords.includes(item) ? activeChipStyle : chipStyle}
               >
                 {item}
               </button>
             ))}
           </div>
+          {selectedKeywords.length > 0 && (
+            <div style={{ marginTop: 14, color: "#94a3b8", fontSize: 13 }}>
+              Selected search: <span style={{ color: "#67e8f9" }}>{selectedKeywords.join(" + ")}</span>
+            </div>
+          )}
         </section>
 
         {message && (
@@ -309,12 +321,12 @@ export default function Home() {
               <h2 style={{ fontSize: 24, marginBottom: 6 }}>Tender Results</h2>
               <p style={{ color: "#94a3b8", marginTop: 0 }}>
                 {tenders
-                  ? `${tenders.pagination.totalItems.toLocaleString("en-IN")} matching tenders${tenders.meta?.source === "live-gem" ? " from live GeM search" : " across PostgreSQL"}`
+                  ? `${tenders.pagination.totalItems.toLocaleString("en-IN")} matching tenders${tenders.meta?.source?.startsWith("live-gem") ? " from live GeM search" : " across PostgreSQL"}`
                   : "Searching stored GeM tenders"}
               </p>
-              {tenders?.meta?.source === "live-gem" && (
+              {tenders?.meta?.source?.startsWith("live-gem") && (
                 <p style={{ color: "#67e8f9", marginTop: -4, fontSize: 13 }}>
-                  Synced from GeM now. Stored unique bids for this search: {(tenders.meta.gemUniqueStored ?? 0).toLocaleString("en-IN")}
+                  Synced from GeM now{tenders.meta.source === "live-gem-multi" ? ` for ${tenders.meta.gemSearchTerms?.length ?? 0} selected keywords` : ""}. Stored unique bids for this search: {(tenders.meta.gemUniqueStored ?? 0).toLocaleString("en-IN")}
                 </p>
               )}
             </div>

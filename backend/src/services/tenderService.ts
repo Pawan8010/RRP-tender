@@ -247,6 +247,10 @@ function normalizeGemSearchTerm(searchTerm: string): string {
   return searchTerm.replace(/\s+/g, " ").trim();
 }
 
+function splitLiveSearchTerms(searchTerm: string): string[] {
+  return unique(searchTerm.split("||").map(normalizeGemSearchTerm).filter((term) => term.length > 0));
+}
+
 async function syncGemSearchResults(searchTerm: string) {
   const normalized = normalizeGemSearchTerm(searchTerm);
   const cacheKey = normalized.toLowerCase();
@@ -304,8 +308,11 @@ export async function searchTenders(query: TenderQuery) {
 
   if (query.q && query.q.trim().length > 0) {
     const searchTerm = query.q.trim();
-    const liveGemSearch = await syncGemSearchResults(searchTerm);
-    const pageTenderIds = liveGemSearch.tenderIds.slice(skip, skip + pageSize);
+    const liveTerms = splitLiveSearchTerms(searchTerm);
+    const liveSearches = await Promise.all(liveTerms.map(syncGemSearchResults));
+    const mergedTenderIds = unique(liveSearches.flatMap((result) => result.tenderIds));
+    const statedTotal = liveSearches.length === 1 ? liveSearches[0].statedTotal : mergedTenderIds.length;
+    const pageTenderIds = mergedTenderIds.slice(skip, skip + pageSize);
     const orderIndex = new Map(pageTenderIds.map((tenderId, index) => [tenderId, index]));
 
     const data = pageTenderIds.length
@@ -316,7 +323,7 @@ export async function searchTenders(query: TenderQuery) {
 
     data.sort((left, right) => (orderIndex.get(left.tenderId) ?? 0) - (orderIndex.get(right.tenderId) ?? 0));
 
-    if (data.length === 0 && liveGemSearch.tenderIds.length === 0) {
+    if (data.length === 0 && mergedTenderIds.length === 0) {
       const fallbackWhere: Prisma.TenderWhereInput = {
         AND: [where, buildTextSearchWhere(searchTerm)],
       };
@@ -326,16 +333,17 @@ export async function searchTenders(query: TenderQuery) {
       ]);
       return paginate(fallbackData, page, pageSize, fallbackTotal, {
         source: "postgresql-fallback",
-        gemStatedTotal: liveGemSearch.statedTotal,
-        gemUniqueStored: liveGemSearch.tenderIds.length,
+        gemStatedTotal: statedTotal,
+        gemUniqueStored: mergedTenderIds.length,
       });
     }
 
-    return paginate(data, page, pageSize, liveGemSearch.statedTotal, {
-      source: "live-gem",
-      gemStatedTotal: liveGemSearch.statedTotal,
-      gemUniqueStored: liveGemSearch.tenderIds.length,
-      gemSearchedAt: liveGemSearch.scrapedAt.toISOString(),
+    return paginate(data, page, pageSize, statedTotal, {
+      source: liveTerms.length > 1 ? "live-gem-multi" : "live-gem",
+      gemStatedTotal: statedTotal,
+      gemUniqueStored: mergedTenderIds.length,
+      gemSearchedAt: new Date(Math.max(...liveSearches.map((result) => result.scrapedAt.getTime()))).toISOString(),
+      gemSearchTerms: liveTerms,
     });
   }
 
