@@ -208,47 +208,19 @@ function expandSearchParts(searchTerm: string): { phrases: string[]; tokens: str
   };
 }
 
-function containsAnyField(term: string): Prisma.TenderWhereInput {
-  const mode = "insensitive" as const;
-  return {
-    OR: [
-      { tenderId: { contains: term, mode } },
-      { title: { contains: term, mode } },
-      { organisation: { contains: term, mode } },
-      { department: { contains: term, mode } },
-      { state: { contains: term, mode } },
-      { category: { contains: term, mode } },
-      { keywordMatched: { contains: term, mode } },
-      { description: { contains: term, mode } },
-    ],
-  };
-}
-
-function buildTextSearchWhere(searchTerm: string): Prisma.TenderWhereInput {
-  const parts = expandSearchParts(searchTerm);
-  const clauses: Prisma.TenderWhereInput[] = [
-    ...parts.phrases.map(containsAnyField),
-    ...parts.relatedKeywords.map(containsAnyField),
-  ];
-
-  if (parts.tokens.length === 1) {
-    const token = parts.tokens[0];
-    if (!EQUIPMENT_FAMILY_TERMS.has(token)) {
-      clauses.push(containsAnyField(token));
-    }
-  } else if (parts.tokens.length > 1) {
-    clauses.push({ AND: parts.tokens.map(containsAnyField) });
-  }
-
-  return { OR: clauses };
-}
-
 function normalizeGemSearchTerm(searchTerm: string): string {
   return searchTerm.replace(/\s+/g, " ").trim();
 }
 
 function splitLiveSearchTerms(searchTerm: string): string[] {
-  return unique(searchTerm.split("||").map(normalizeGemSearchTerm).filter((term) => term.length > 0));
+  const terms = searchTerm.split("||").map(normalizeGemSearchTerm).filter((term) => term.length > 0);
+  const expanded = terms.flatMap((term) => {
+    const corrected = expandSearchParts(term).phrases
+      .map(normalizeGemSearchTerm)
+      .filter((phrase) => phrase.length > 0);
+    return [term, ...corrected];
+  });
+  return unique(expanded);
 }
 
 async function syncGemSearchResults(searchTerm: string) {
@@ -322,21 +294,6 @@ export async function searchTenders(query: TenderQuery) {
       : [];
 
     data.sort((left, right) => (orderIndex.get(left.tenderId) ?? 0) - (orderIndex.get(right.tenderId) ?? 0));
-
-    if (data.length === 0 && mergedTenderIds.length === 0) {
-      const fallbackWhere: Prisma.TenderWhereInput = {
-        AND: [where, buildTextSearchWhere(searchTerm)],
-      };
-      const [fallbackData, fallbackTotal] = await Promise.all([
-        prisma.tender.findMany({ where: fallbackWhere, orderBy, skip, take: pageSize }),
-        prisma.tender.count({ where: fallbackWhere }),
-      ]);
-      return paginate(fallbackData, page, pageSize, fallbackTotal, {
-        source: "postgresql-fallback",
-        gemStatedTotal: statedTotal,
-        gemUniqueStored: mergedTenderIds.length,
-      });
-    }
 
     return paginate(data, page, pageSize, statedTotal, {
       source: liveTerms.length > 1 ? "live-gem-multi" : "live-gem",
