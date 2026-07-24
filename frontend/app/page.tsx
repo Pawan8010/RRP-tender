@@ -29,6 +29,8 @@ type TenderResponse = {
 
 type Stats = {
   totalTenders: number;
+  gemListedTotal: number;
+  duplicateOrUnmappedListings: number;
   newToday: number;
   closingSoon: number;
   keywordMatches: number;
@@ -221,12 +223,18 @@ export default function Home() {
           </div>
         </header>
 
-        <section style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 16, margin: "24px 0" }}>
-          <Stat title="Stored Tenders" value={stats?.totalTenders ?? 0} icon={<Database size={20} />} />
+        <section style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 16, margin: "24px 0" }}>
+          <Stat title="GeM Listed" value={stats?.gemListedTotal ?? stats?.totalTenders ?? 0} icon={<ShieldCheck size={20} />} />
+          <Stat title="Unique Active" value={stats?.totalTenders ?? 0} icon={<Database size={20} />} />
           <Stat title="New Today" value={stats?.newToday ?? 0} icon={<RefreshCw size={20} />} />
           <Stat title="Closing Soon" value={stats?.closingSoon ?? 0} icon={<CalendarDays size={20} />} />
           <Stat title="Keyword Matches" value={stats?.keywordMatches ?? 0} icon={<Search size={20} />} />
         </section>
+        {stats && stats.duplicateOrUnmappedListings > 0 && (
+          <p style={{ color: "#94a3b8", margin: "-12px 0 20px" }}>
+            GeM reports {stats.gemListedTotal.toLocaleString("en-IN")} listed rows; PostgreSQL stores {stats.totalTenders.toLocaleString("en-IN")} unique active bid numbers and avoids duplicate existing tenders.
+          </p>
+        )}
 
         <section style={panelStyle}>
           <div style={{ display: "flex", gap: 12 }}>

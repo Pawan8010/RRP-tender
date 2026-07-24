@@ -2,6 +2,7 @@ import { prisma } from "../config/db";
 import { logger } from "../utils/logger";
 import { scrapeGemApi } from "./gemApiScraper";
 import { upsertScrapedTenders } from "../services/tenderService";
+import { TenderStatus } from "@prisma/client";
 
 let scrapeInProgress = false;
 
@@ -42,7 +43,7 @@ export async function runScrape(options: RunScrapeOptions = {}): Promise<ScrapeR
         seenTenderIds.add(tender.tenderId);
         return true;
       });
-      const counts = await upsertScrapedTenders(uniquePage);
+      const counts = await upsertScrapedTenders(uniquePage, run.id);
       tendersFound += uniquePage.length;
       tendersNew += counts.inserted;
       tendersUpdated += counts.updated;
@@ -58,6 +59,25 @@ export async function runScrape(options: RunScrapeOptions = {}): Promise<ScrapeR
       });
     }, { maxPages: options.maxPages, sort: options.sort, startPage: options.startPage });
 
+    const isFullCurrentGeMScrape = !options.maxPages && (options.startPage ?? 1) <= 1;
+    const closeStale = isFullCurrentGeMScrape && scraped.failedPages.length === 0;
+    let staleClosed = 0;
+
+    if (closeStale) {
+      const result = await prisma.tender.updateMany({
+        where: {
+          portal: "GeM",
+          tenderStatus: TenderStatus.LIVE,
+          OR: [{ lastSeenRunId: { not: run.id } }, { lastSeenRunId: null }],
+        },
+        data: {
+          tenderStatus: TenderStatus.CLOSED,
+          lastUpdated: new Date(),
+        },
+      });
+      staleClosed = result.count;
+    }
+
     await prisma.scrapeRun.update({
       where: { id: run.id },
       data: {
@@ -67,12 +87,12 @@ export async function runScrape(options: RunScrapeOptions = {}): Promise<ScrapeR
         tendersFound,
         tendersNew,
         tendersUpdated,
-        errorMessage: `GeM stated total: ${scraped.statedTotal}`,
+        errorMessage: `GeM stated total: ${scraped.statedTotal}; stale closed: ${staleClosed}; failed pages: ${scraped.failedPages.length}`,
       },
     });
 
     logger.info(
-      `[scrapeRunner] Completed: pages=${scraped.pagesScraped}, found=${tendersFound}, new=${tendersNew}, updated=${tendersUpdated}, statedTotal=${scraped.statedTotal}`
+      `[scrapeRunner] Completed: pages=${scraped.pagesScraped}/${scraped.maxAvailablePages}, found=${tendersFound}, new=${tendersNew}, updated=${tendersUpdated}, staleClosed=${staleClosed}, failedPages=${scraped.failedPages.length}, statedTotal=${scraped.statedTotal}`
     );
 
     return {

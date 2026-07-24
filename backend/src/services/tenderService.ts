@@ -36,13 +36,18 @@ export interface TenderQuery {
  * Returns counts of how many were newly inserted vs updated.
  */
 export async function upsertScrapedTenders(
-  rawTenders: RawScrapedTender[]
+  rawTenders: RawScrapedTender[],
+  scrapeRunId?: string
 ): Promise<{ inserted: number; updated: number }> {
   let inserted = 0;
   let updated = 0;
 
   for (const raw of rawTenders) {
-    const data = mapRawTenderToUpsertData(raw);
+    const data = {
+      ...mapRawTenderToUpsertData(raw),
+      lastSeenAt: new Date(),
+      lastSeenRunId: scrapeRunId ?? null,
+    };
 
     const existing = await prisma.tender.findUnique({
       where: { tenderId: raw.tenderId },
@@ -68,7 +73,9 @@ export async function upsertScrapedTenders(
 
 /** Builds the Prisma WHERE clause for structured filters (everything except free-text `q`). */
 function buildWhere(query: TenderQuery): Prisma.TenderWhereInput {
-  const where: Prisma.TenderWhereInput = {};
+  const where: Prisma.TenderWhereInput = {
+    tenderStatus: query.status ?? TenderStatus.LIVE,
+  };
 
   if (query.state) where.state = { equals: query.state, mode: "insensitive" };
   if (query.department) where.department = { equals: query.department, mode: "insensitive" };
@@ -170,19 +177,22 @@ function expandSearchParts(searchTerm: string): { phrases: string[]; tokens: str
   const tokens = unique(tokenSource.filter((token) => token.length >= 3 && !SEARCH_STOP_WORDS.has(token)));
   const relatedKeywords = KEYWORDS.filter((keyword) => {
     const key = keyword.toLowerCase();
+    if (tokens.length > 1) {
+      return tokens.every((token) => key.includes(token)) || key.includes(correctedPhrase) || correctedPhrase.includes(key);
+    }
     return tokens.some((token) => key.includes(token)) || key.includes(correctedPhrase) || correctedPhrase.includes(key);
   });
 
-  if (tokens.includes("sight")) {
+  if (tokens.length === 1 && tokens.includes("sight")) {
     relatedKeywords.push(...KEYWORDS.filter((keyword) => keyword.toLowerCase().includes("sight")));
   }
-  if (tokens.includes("thermal")) {
+  if (tokens.length === 1 && tokens.includes("thermal")) {
     relatedKeywords.push(...KEYWORDS.filter((keyword) => keyword.toLowerCase().includes("thermal")));
   }
-  if (tokens.includes("camera")) {
+  if (tokens.length === 1 && tokens.includes("camera")) {
     relatedKeywords.push(...KEYWORDS.filter((keyword) => keyword.toLowerCase().includes("camera")));
   }
-  if (tokens.includes("surveillance")) {
+  if (tokens.length === 1 && tokens.includes("surveillance")) {
     relatedKeywords.push(...KEYWORDS.filter((keyword) => keyword.toLowerCase().includes("surveillance")));
   }
 
@@ -293,14 +303,25 @@ export async function getTenderStats() {
   const in7Days = new Date();
   in7Days.setDate(in7Days.getDate() + 7);
 
-  const [totalTenders, newToday, closingSoon, keywordMatches] = await Promise.all([
-    prisma.tender.count(),
-    prisma.tender.count({ where: { createdAt: { gte: startOfToday } } }),
+  const [totalTenders, newToday, closingSoon, keywordMatches, latestRun] = await Promise.all([
+    prisma.tender.count({ where: { tenderStatus: TenderStatus.LIVE } }),
+    prisma.tender.count({ where: { tenderStatus: TenderStatus.LIVE, createdAt: { gte: startOfToday } } }),
     prisma.tender.count({
-      where: { closingDate: { gte: new Date(), lte: in7Days } },
+      where: { tenderStatus: TenderStatus.LIVE, closingDate: { gte: new Date(), lte: in7Days } },
     }),
-    prisma.tender.count({ where: { keywordMatched: { not: null } } }),
+    prisma.tender.count({ where: { tenderStatus: TenderStatus.LIVE, keywordMatched: { not: null } } }),
+    prisma.scrapeRun.findFirst({ orderBy: { startedAt: "desc" } }),
   ]);
 
-  return { totalTenders, newToday, closingSoon, keywordMatches };
+  const statedTotalMatch = latestRun?.errorMessage?.match(/GeM stated total:\s*(\d+)/i);
+  const gemListedTotal = statedTotalMatch ? Number(statedTotalMatch[1]) : totalTenders;
+
+  return {
+    totalTenders,
+    gemListedTotal,
+    duplicateOrUnmappedListings: Math.max(0, gemListedTotal - totalTenders),
+    newToday,
+    closingSoon,
+    keywordMatches,
+  };
 }

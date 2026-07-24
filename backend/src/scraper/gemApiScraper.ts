@@ -225,6 +225,8 @@ export interface GemApiScrapeResult {
   tenders: RawScrapedTender[];
   pagesScraped: number;
   statedTotal: number;
+  failedPages: number[];
+  maxAvailablePages: number;
 }
 
 export async function scrapeGemApi(
@@ -289,5 +291,5 @@ export async function scrapeGemApi(
     }
   }
 
-  return { tenders, pagesScraped, statedTotal };
+  return { tenders, pagesScraped, statedTotal, failedPages, maxAvailablePages };
 }

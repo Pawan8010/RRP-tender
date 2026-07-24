@@ -51,6 +51,8 @@ model Tender {
   searchVector   Unsupported("tsvector")?
 
   lastUpdated    DateTime     @default(now())
+  lastSeenAt     DateTime?
+  lastSeenRunId  String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -78,6 +80,8 @@ model Tender {
   @@index([state])
   @@index([category])
   @@index([tenderStatus])
+  @@index([lastSeenRunId])
+  @@index([lastSeenAt])
   @@map("tenders")
 }
 
