@@ -152,6 +152,7 @@ const SEARCH_STOP_WORDS = new Set([
   "range",
 ]);
 const ACRONYM_TERMS = new Set(["lrf", "nvd", "nvg", "eoss", "loros", "ptz", "eo", "lwir", "mwir"]);
+const EQUIPMENT_FAMILY_TERMS = new Set(["sight", "camera", "surveillance", "thermal", "vision"]);
 
 function unique(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
@@ -164,6 +165,7 @@ function expandSearchParts(searchTerm: string): { phrases: string[]; tokens: str
   const isAcronymOnly = rawWords.length === 1 && ACRONYM_TERMS.has(rawWords[0]);
   const correctedWords = rawWords.map((word) => SEARCH_CORRECTIONS[word] ?? word);
   const correctedPhrase = correctedWords.join(" ");
+  const isSingleEquipmentFamilyTerm = correctedWords.length === 1 && EQUIPMENT_FAMILY_TERMS.has(correctedWords[0]);
   const tokenSource = hasSightTypo ? ["sight"] : isAcronymOnly ? rawWords : correctedPhrase.split(/\s+/);
   const tokens = unique(tokenSource.filter((token) => token.length >= 3 && !SEARCH_STOP_WORDS.has(token)));
   const relatedKeywords = KEYWORDS.filter((keyword) => {
@@ -185,7 +187,9 @@ function expandSearchParts(searchTerm: string): { phrases: string[]; tokens: str
   }
 
   return {
-    phrases: unique([searchTerm, normalized, correctedPhrase]).filter((phrase) => phrase.length >= 3),
+    phrases: isSingleEquipmentFamilyTerm
+      ? []
+      : unique([searchTerm, normalized, correctedPhrase]).filter((phrase) => phrase.length >= 3),
     tokens,
     relatedKeywords: unique(relatedKeywords).slice(0, 30),
   };
@@ -215,7 +219,10 @@ function buildTextSearchWhere(searchTerm: string): Prisma.TenderWhereInput {
   ];
 
   if (parts.tokens.length === 1) {
-    clauses.push(containsAnyField(parts.tokens[0]));
+    const token = parts.tokens[0];
+    if (!EQUIPMENT_FAMILY_TERMS.has(token)) {
+      clauses.push(containsAnyField(token));
+    }
   } else if (parts.tokens.length > 1) {
     clauses.push({ AND: parts.tokens.map(containsAnyField) });
   }
