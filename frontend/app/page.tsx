@@ -25,6 +25,12 @@ type TenderResponse = {
     totalItems: number;
     totalPages: number;
   };
+  meta?: {
+    source?: string;
+    gemStatedTotal?: number;
+    gemUniqueStored?: number;
+    gemSearchedAt?: string;
+  };
 };
 
 type Stats = {
@@ -104,6 +110,7 @@ function dateLabel(value?: string | null) {
 
 export default function Home() {
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [keyword, setKeyword] = useState("");
   const [page, setPage] = useState(1);
   const [tenders, setTenders] = useState<TenderResponse | null>(null);
@@ -112,12 +119,20 @@ export default function Home() {
   const [scraping, setScraping] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const activeSearch = keyword || query;
+  const activeSearch = keyword || debouncedQuery;
   const searchPath = useMemo(() => {
     const params = new URLSearchParams({ page: String(page), pageSize: "50", sort: "recently_updated" });
     if (activeSearch) params.set("q", activeSearch);
     return `/tenders?${params.toString()}`;
   }, [activeSearch, page]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedQuery(query.trim());
+      setPage(1);
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [query]);
 
   async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
     let lastError: unknown;
@@ -255,6 +270,7 @@ export default function Home() {
               <button
                 onClick={() => {
                   setQuery("");
+                  setDebouncedQuery("");
                   setKeyword("");
                   setPage(1);
                 }}
@@ -292,8 +308,15 @@ export default function Home() {
             <div>
               <h2 style={{ fontSize: 24, marginBottom: 6 }}>Tender Results</h2>
               <p style={{ color: "#94a3b8", marginTop: 0 }}>
-                {tenders ? `${tenders.pagination.totalItems.toLocaleString("en-IN")} matching tenders across PostgreSQL` : "Searching stored GeM tenders"}
+                {tenders
+                  ? `${tenders.pagination.totalItems.toLocaleString("en-IN")} matching tenders${tenders.meta?.source === "live-gem" ? " from live GeM search" : " across PostgreSQL"}`
+                  : "Searching stored GeM tenders"}
               </p>
+              {tenders?.meta?.source === "live-gem" && (
+                <p style={{ color: "#67e8f9", marginTop: -4, fontSize: 13 }}>
+                  Synced from GeM now. Stored unique bids for this search: {(tenders.meta.gemUniqueStored ?? 0).toLocaleString("en-IN")}
+                </p>
+              )}
             </div>
           </div>
           {loading ? (

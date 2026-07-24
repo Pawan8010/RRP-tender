@@ -4,6 +4,7 @@ import { logger } from "../utils/logger";
 import { RawScrapedTender } from "../types/scraper";
 import { mapRawTenderToUpsertData } from "../scraper/mapper";
 import { KEYWORDS } from "../scraper/keywords";
+import { scrapeGemApi } from "../scraper/gemApiScraper";
 
 export interface TenderQuery {
   q?: string;
@@ -160,6 +161,8 @@ const SEARCH_STOP_WORDS = new Set([
 ]);
 const ACRONYM_TERMS = new Set(["lrf", "nvd", "nvg", "eoss", "loros", "ptz", "eo", "lwir", "mwir"]);
 const EQUIPMENT_FAMILY_TERMS = new Set(["sight", "camera", "surveillance", "thermal", "vision"]);
+const GEM_SEARCH_CACHE_TTL_MS = 15 * 60 * 1000;
+const gemSearchCache = new Map<string, { expiresAt: number; tenderIds: string[]; statedTotal: number; scrapedAt: Date }>();
 
 function unique(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
@@ -240,6 +243,52 @@ function buildTextSearchWhere(searchTerm: string): Prisma.TenderWhereInput {
   return { OR: clauses };
 }
 
+function normalizeGemSearchTerm(searchTerm: string): string {
+  return searchTerm.replace(/\s+/g, " ").trim();
+}
+
+async function syncGemSearchResults(searchTerm: string) {
+  const normalized = normalizeGemSearchTerm(searchTerm);
+  const cacheKey = normalized.toLowerCase();
+  const cached = gemSearchCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached;
+
+  logger.info(`[tenderService] Syncing live GeM search results for "${normalized}"`);
+  const seenTenderIds = new Set<string>();
+  const orderedTenderIds: string[] = [];
+  const result = await scrapeGemApi(
+    async (pageTenders) => {
+      const uniquePage = pageTenders.filter((tender) => {
+        if (seenTenderIds.has(tender.tenderId)) return false;
+        seenTenderIds.add(tender.tenderId);
+        orderedTenderIds.push(tender.tenderId);
+        return true;
+      });
+      if (uniquePage.length > 0) {
+        await upsertScrapedTenders(uniquePage);
+      }
+    },
+    {
+      searchTerm: normalized,
+      sort: "Bid-End-Date-Oldest",
+      startPage: 1,
+      maxPages: 0,
+    }
+  );
+
+  const value = {
+    expiresAt: Date.now() + GEM_SEARCH_CACHE_TTL_MS,
+    tenderIds: orderedTenderIds,
+    statedTotal: result.statedTotal,
+    scrapedAt: new Date(),
+  };
+  gemSearchCache.set(cacheKey, value);
+  logger.info(
+    `[tenderService] GeM search synced for "${normalized}": statedTotal=${result.statedTotal}, unique=${orderedTenderIds.length}, failedPages=${result.failedPages.length}`
+  );
+  return value;
+}
+
 /**
  * Searches and filters tenders. Free-text `q` uses broad case-insensitive
  * matching across bid number, title, buyer/department, category, keyword tags,
@@ -255,21 +304,39 @@ export async function searchTenders(query: TenderQuery) {
 
   if (query.q && query.q.trim().length > 0) {
     const searchTerm = query.q.trim();
-    const combinedWhere: Prisma.TenderWhereInput = {
-      AND: [where, buildTextSearchWhere(searchTerm)],
-    };
+    const liveGemSearch = await syncGemSearchResults(searchTerm);
+    const pageTenderIds = liveGemSearch.tenderIds.slice(skip, skip + pageSize);
+    const orderIndex = new Map(pageTenderIds.map((tenderId, index) => [tenderId, index]));
 
-    const [data, totalItems] = await Promise.all([
-      prisma.tender.findMany({
-        where: combinedWhere,
-        orderBy,
-        skip,
-        take: pageSize,
-      }),
-      prisma.tender.count({ where: combinedWhere }),
-    ]);
+    const data = pageTenderIds.length
+      ? await prisma.tender.findMany({
+          where: { AND: [where, { tenderId: { in: pageTenderIds } }] },
+        })
+      : [];
 
-    return paginate(data, page, pageSize, totalItems);
+    data.sort((left, right) => (orderIndex.get(left.tenderId) ?? 0) - (orderIndex.get(right.tenderId) ?? 0));
+
+    if (data.length === 0 && liveGemSearch.tenderIds.length === 0) {
+      const fallbackWhere: Prisma.TenderWhereInput = {
+        AND: [where, buildTextSearchWhere(searchTerm)],
+      };
+      const [fallbackData, fallbackTotal] = await Promise.all([
+        prisma.tender.findMany({ where: fallbackWhere, orderBy, skip, take: pageSize }),
+        prisma.tender.count({ where: fallbackWhere }),
+      ]);
+      return paginate(fallbackData, page, pageSize, fallbackTotal, {
+        source: "postgresql-fallback",
+        gemStatedTotal: liveGemSearch.statedTotal,
+        gemUniqueStored: liveGemSearch.tenderIds.length,
+      });
+    }
+
+    return paginate(data, page, pageSize, liveGemSearch.statedTotal, {
+      source: "live-gem",
+      gemStatedTotal: liveGemSearch.statedTotal,
+      gemUniqueStored: liveGemSearch.tenderIds.length,
+      gemSearchedAt: liveGemSearch.scrapedAt.toISOString(),
+    });
   }
 
   const [data, totalItems] = await Promise.all([
@@ -280,7 +347,7 @@ export async function searchTenders(query: TenderQuery) {
   return paginate(data, page, pageSize, totalItems);
 }
 
-function paginate<T>(data: T[], page: number, pageSize: number, totalItems: number) {
+function paginate<T>(data: T[], page: number, pageSize: number, totalItems: number, meta?: Record<string, unknown>) {
   return {
     data,
     pagination: {
@@ -289,6 +356,7 @@ function paginate<T>(data: T[], page: number, pageSize: number, totalItems: numb
       totalItems,
       totalPages: Math.max(1, Math.ceil(totalItems / pageSize)),
     },
+    meta,
   };
 }
 
