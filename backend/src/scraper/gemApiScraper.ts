@@ -103,9 +103,9 @@ function cookiesFromHeaders(headers: Record<string, string | string[] | undefine
     .join("; ");
 }
 
-function payload(page: number, sort = "Bid-End-Date-Oldest") {
+function payload(page: number, sort = "Bid-End-Date-Oldest", searchTerm = "") {
   const data: Record<string, unknown> = {
-    param: { searchBid: "", searchType: "fullText" },
+    param: { searchBid: searchTerm, searchType: "fullText" },
     filter: {
       bidStatusType: "ongoing_bids",
       byType: "all",
@@ -135,9 +135,9 @@ async function fetchFirstPageSession() {
   };
 }
 
-async function fetchGemDataPage(csrf: string, cookie: string, page: number, sort?: string) {
+async function fetchGemDataPage(csrf: string, cookie: string, page: number, sort?: string, searchTerm?: string) {
   const body = new URLSearchParams({
-    payload: JSON.stringify(payload(page, sort)),
+    payload: JSON.stringify(payload(page, sort, searchTerm)),
     csrf_bd_gem_nk: csrf,
   });
 
@@ -165,11 +165,11 @@ async function fetchGemDataPage(csrf: string, cookie: string, page: number, sort
   return json.response.response as { numFound: number; start: number; docs: GemBid[] };
 }
 
-async function fetchGemDataPageWithRetry(csrf: string, cookie: string, page: number, sort?: string) {
+async function fetchGemDataPageWithRetry(csrf: string, cookie: string, page: number, sort?: string, searchTerm?: string) {
   let lastError: unknown;
   for (let attempt = 1; attempt <= config.scraperMaxRetries; attempt += 1) {
     try {
-      return await fetchGemDataPage(csrf, cookie, page, sort);
+      return await fetchGemDataPage(csrf, cookie, page, sort, searchTerm);
     } catch (error) {
       lastError = error;
       await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
@@ -219,6 +219,7 @@ export interface GemApiScrapeOptions {
   maxPages?: number;
   sort?: string;
   startPage?: number;
+  searchTerm?: string;
 }
 
 export interface GemApiScrapeResult {
@@ -234,7 +235,7 @@ export async function scrapeGemApi(
   options: GemApiScrapeOptions = {}
 ): Promise<GemApiScrapeResult> {
   const { csrf, cookie } = await fetchFirstPageSession();
-  const firstPage = await fetchGemDataPage(csrf, cookie, 1, options.sort);
+  const firstPage = await fetchGemDataPage(csrf, cookie, 1, options.sort, options.searchTerm);
   const statedTotal = Number(firstPage.numFound || 0);
   const maxAvailablePages = Math.max(1, Math.ceil(statedTotal / PAGE_SIZE));
   const configuredMaxPages = options.maxPages ?? config.scraperMaxPages;
@@ -268,7 +269,7 @@ export async function scrapeGemApi(
       nextPage += 1;
       if (page > maxPages) return;
       try {
-        const pageData = await fetchGemDataPageWithRetry(csrf, cookie, page, options.sort);
+        const pageData = await fetchGemDataPageWithRetry(csrf, cookie, page, options.sort, options.searchTerm);
         const count = await handlePage(page, pageData);
         if (count === 0) emptyPageSeen = true;
       } catch {
@@ -284,7 +285,7 @@ export async function scrapeGemApi(
 
   for (const page of failedPages) {
     try {
-      const pageData = await fetchGemDataPageWithRetry(csrf, cookie, page, options.sort);
+      const pageData = await fetchGemDataPageWithRetry(csrf, cookie, page, options.sort, options.searchTerm);
       await handlePage(page, pageData);
     } catch {
       // Keep the scrape moving; the next "new tender" scrape can fill occasional missed pages.
