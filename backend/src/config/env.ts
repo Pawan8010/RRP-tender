@@ -21,6 +21,7 @@ export const config = {
   scraperMaxRetries: parseInt(process.env.SCRAPER_MAX_RETRIES ?? "3", 10),
   scraperTimeoutMs: parseInt(process.env.SCRAPER_TIMEOUT_MS ?? "45000", 10),
   scraperMaxPages: parseInt(process.env.SCRAPER_MAX_PAGES ?? "2", 10),
+  newTenderMaxPages: parseInt(process.env.NEW_TENDER_MAX_PAGES ?? "75", 10),
   scraperRequestDelayMs: parseInt(process.env.SCRAPER_REQUEST_DELAY_MS ?? "200", 10),
   scraperApiConcurrency: parseInt(process.env.SCRAPER_API_CONCURRENCY ?? "12", 10),
   scraperStartPage: parseInt(process.env.SCRAPER_START_PAGE ?? "1", 10),

@@ -90,6 +90,7 @@ SCRAPER_MAX_PAGES=0
 SCRAPER_START_PAGE=1
 SCRAPER_API_CONCURRENCY=24
 SCRAPER_REQUEST_DELAY_MS=50
+NEW_TENDER_MAX_PAGES=75
 ```
 
 Apply migrations and build:
@@ -153,7 +154,9 @@ This:
 
 Click `Scrape New Tenders`.
 
-This scans the latest GeM pages first and is useful for refreshing newly published bids.
+This scans the latest GeM pages first and is useful for refreshing newly published bids. Each record is upserted by its
+unique GeM bid number, so existing tenders are updated rather than duplicated. The UI refreshes results and dashboard
+counts while the background scrape is running. Set `NEW_TENDER_MAX_PAGES` to control how many newest pages are checked.
 
 ### Live Search
 
@@ -206,6 +209,7 @@ SCRAPE_CRON="0 */6 * * *"
 GEM_BASE_URL=https://bidplus.gem.gov.in
 SCRAPER_MAX_PAGES=0
 SCRAPER_START_PAGE=1
+NEW_TENDER_MAX_PAGES=75
 SCRAPER_API_CONCURRENCY=24
 SCRAPER_REQUEST_DELAY_MS=50
 SCRAPER_MAX_RETRIES=3

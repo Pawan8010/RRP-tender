@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { runScrape, isScrapeInProgress } from "../scraper/scrapeRunner";
 import { logger } from "../utils/logger";
+import { config } from "../config/env";
 
 /**
  * POST /api/scrape
@@ -36,7 +37,7 @@ export async function triggerNewTenderScrape(req: Request, res: Response, next: 
     logger.info("[scrapeController] New tender scrape triggered via API");
     void runScrape({
       label: "new-tenders",
-      maxPages: 75,
+      maxPages: config.newTenderMaxPages,
       startPage: 1,
       sort: "Bid-Start-Date-Latest",
     }).catch((err) => {
