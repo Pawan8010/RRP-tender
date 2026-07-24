@@ -3,6 +3,7 @@ import { prisma } from "../config/db";
 import { logger } from "../utils/logger";
 import { RawScrapedTender } from "../types/scraper";
 import { mapRawTenderToUpsertData } from "../scraper/mapper";
+import { KEYWORDS } from "../scraper/keywords";
 
 export interface TenderQuery {
   q?: string;
@@ -119,20 +120,107 @@ function buildOrderBy(sort?: TenderQuery["sort"]): Prisma.TenderOrderByWithRelat
   }
 }
 
-function buildTextSearchWhere(searchTerm: string): Prisma.TenderWhereInput {
+const SEARCH_CORRECTIONS: Record<string, string> = {
+  slight: "sight",
+  site: "sight",
+  sigth: "sight",
+  singht: "sight",
+  lrf: "laser range finder",
+  nvd: "night vision device",
+  nvg: "night vision goggles",
+  eoss: "electro optical surveillance system",
+  loros: "long range observation system",
+  ptz: "pan tilt zoom camera",
+  eo: "electro optical",
+};
+const SEARCH_STOP_WORDS = new Set([
+  "and",
+  "for",
+  "from",
+  "with",
+  "the",
+  "this",
+  "that",
+  "system",
+  "systems",
+  "service",
+  "services",
+  "repair",
+  "supply",
+  "installation",
+  "long",
+  "range",
+]);
+const ACRONYM_TERMS = new Set(["lrf", "nvd", "nvg", "eoss", "loros", "ptz", "eo", "lwir", "mwir"]);
+
+function unique(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function expandSearchParts(searchTerm: string): { phrases: string[]; tokens: string[]; relatedKeywords: string[] } {
+  const normalized = searchTerm.toLowerCase().replace(/[^\w\s/+-]/g, " ").replace(/\s+/g, " ").trim();
+  const rawWords = normalized.split(" ").filter(Boolean);
+  const hasSightTypo = rawWords.some((word) => ["slight", "site", "sigth", "singht"].includes(word));
+  const isAcronymOnly = rawWords.length === 1 && ACRONYM_TERMS.has(rawWords[0]);
+  const correctedWords = rawWords.map((word) => SEARCH_CORRECTIONS[word] ?? word);
+  const correctedPhrase = correctedWords.join(" ");
+  const tokenSource = hasSightTypo ? ["sight"] : isAcronymOnly ? rawWords : correctedPhrase.split(/\s+/);
+  const tokens = unique(tokenSource.filter((token) => token.length >= 3 && !SEARCH_STOP_WORDS.has(token)));
+  const relatedKeywords = KEYWORDS.filter((keyword) => {
+    const key = keyword.toLowerCase();
+    return tokens.some((token) => key.includes(token)) || key.includes(correctedPhrase) || correctedPhrase.includes(key);
+  });
+
+  if (tokens.includes("sight")) {
+    relatedKeywords.push(...KEYWORDS.filter((keyword) => keyword.toLowerCase().includes("sight")));
+  }
+  if (tokens.includes("thermal")) {
+    relatedKeywords.push(...KEYWORDS.filter((keyword) => keyword.toLowerCase().includes("thermal")));
+  }
+  if (tokens.includes("camera")) {
+    relatedKeywords.push(...KEYWORDS.filter((keyword) => keyword.toLowerCase().includes("camera")));
+  }
+  if (tokens.includes("surveillance")) {
+    relatedKeywords.push(...KEYWORDS.filter((keyword) => keyword.toLowerCase().includes("surveillance")));
+  }
+
+  return {
+    phrases: unique([searchTerm, normalized, correctedPhrase]).filter((phrase) => phrase.length >= 3),
+    tokens,
+    relatedKeywords: unique(relatedKeywords).slice(0, 30),
+  };
+}
+
+function containsAnyField(term: string): Prisma.TenderWhereInput {
   const mode = "insensitive" as const;
   return {
     OR: [
-      { tenderId: { contains: searchTerm, mode } },
-      { title: { contains: searchTerm, mode } },
-      { organisation: { contains: searchTerm, mode } },
-      { department: { contains: searchTerm, mode } },
-      { state: { contains: searchTerm, mode } },
-      { category: { contains: searchTerm, mode } },
-      { keywordMatched: { contains: searchTerm, mode } },
-      { description: { contains: searchTerm, mode } },
+      { tenderId: { contains: term, mode } },
+      { title: { contains: term, mode } },
+      { organisation: { contains: term, mode } },
+      { department: { contains: term, mode } },
+      { state: { contains: term, mode } },
+      { category: { contains: term, mode } },
+      { keywordMatched: { contains: term, mode } },
+      { description: { contains: term, mode } },
     ],
   };
+}
+
+function buildTextSearchWhere(searchTerm: string): Prisma.TenderWhereInput {
+  const parts = expandSearchParts(searchTerm);
+  const clauses: Prisma.TenderWhereInput[] = [
+    ...parts.phrases.map(containsAnyField),
+    ...parts.relatedKeywords.map(containsAnyField),
+  ];
+
+  if (parts.tokens.length === 1) {
+    clauses.push(containsAnyField(parts.tokens[0]));
+  } else if (parts.tokens.length > 1) {
+    clauses.push({ AND: parts.tokens.map(containsAnyField) });
+  }
+
+  return { OR: clauses };
 }
 
 /**

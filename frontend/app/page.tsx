@@ -43,26 +43,53 @@ type ScrapeResult = {
   statedTotal?: number;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
+const API_BASES = unique([
+  process.env.NEXT_PUBLIC_API_URL,
+  "http://127.0.0.1:4000/api",
+  "http://localhost:4000/api",
+]);
 const KEYWORDS = [
+  "Weapon Sight",
   "Thermal Camera",
   "Thermal Weapon Sight",
   "Thermal Imager",
+  "Thermal Imaging Sight",
+  "Handheld Thermal Imager",
+  "Uncooled Thermal",
+  "Cooled Thermal",
+  "Night Vision Sight",
+  "Day Night Sight",
   "Night Vision Device",
+  "Night Vision Device (NVD)",
   "Night Vision Goggles",
+  "Night Vision Goggles (NVG)",
+  "Image Intensifier",
   "Laser Range Finder",
+  "Laser Range Finder (LRF) integrated sight",
   "LOROS",
+  "Long Range Observation System (LOROS)",
   "EOSS",
+  "Electro Optical Surveillance System (EOSS)",
   "Battlefield Surveillance Radar",
+  "Battlefield Surveillance Radar + EO",
   "Border Surveillance System",
+  "Pan Tilt Zoom Camera",
+  "PTZ with EO payload",
+  "Long Range PTZ Camera",
+  "PTZ Camera",
+  "Optical Camera",
+  "Night Vision Camera",
   "Reflex Sight",
   "Red Dot Sight",
   "Holographic Sight",
-  "Weapon Sight",
   "LWIR",
   "MWIR",
   "Target Acquisition System",
 ];
+
+function unique(values: Array<string | undefined>): string[] {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
+}
 
 function dateLabel(value?: string | null) {
   if (!value) return "Not listed";
@@ -80,21 +107,33 @@ export default function Home() {
   const [message, setMessage] = useState<string | null>(null);
 
   const activeSearch = keyword || query;
-  const searchUrl = useMemo(() => {
+  const searchPath = useMemo(() => {
     const params = new URLSearchParams({ page: String(page), pageSize: "50", sort: "recently_updated" });
     if (activeSearch) params.set("q", activeSearch);
-    return `${API_BASE}/tenders?${params.toString()}`;
+    return `/tenders?${params.toString()}`;
   }, [activeSearch, page]);
+
+  async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+    let lastError: unknown;
+    for (const base of API_BASES) {
+      try {
+        const response = await fetch(`${base}${path}`, { cache: "no-store", ...init });
+        if (response.ok) return response;
+        lastError = new Error(`${base}${path} returned HTTP ${response.status}`);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("Unable to connect to backend API");
+  }
 
   async function loadData() {
     setLoading(true);
     try {
       const [tenderRes, statsRes] = await Promise.all([
-        fetch(searchUrl, { cache: "no-store" }),
-        fetch(`${API_BASE}/tenders/stats`, { cache: "no-store" }),
+        apiFetch(searchPath),
+        apiFetch("/tenders/stats"),
       ]);
-      if (!tenderRes.ok) throw new Error(`Tender API returned ${tenderRes.status}`);
-      if (!statsRes.ok) throw new Error(`Stats API returned ${statsRes.status}`);
       setTenders(await tenderRes.json());
       setStats(await statsRes.json());
       setMessage(null);
@@ -109,7 +148,7 @@ export default function Home() {
     setScraping(true);
     setMessage("Scraping GeM now. Full scrape can take time because GeM has thousands of active bids.");
     try {
-      const response = await fetch(`${API_BASE}/scrape`, { method: "POST" });
+      const response = await apiFetch("/scrape", { method: "POST" });
       const result = (await response.json()) as ScrapeResult;
       if (!response.ok || (result.status !== "SUCCESS" && result.status !== "STARTED")) {
         throw new Error(`Scrape failed after ${result.pagesScraped || 0} pages`);
@@ -126,8 +165,7 @@ export default function Home() {
   async function waitForScrapeToFinish() {
     for (let attempt = 0; attempt < 120; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 2000));
-      const response = await fetch(`${API_BASE}/scrape/status`, { cache: "no-store" });
-      if (!response.ok) return;
+      const response = await apiFetch("/scrape/status");
       const status = await response.json();
       await loadData();
       if (!status.inProgress) return;
@@ -138,8 +176,7 @@ export default function Home() {
     setScraping(true);
     setMessage("Checking latest GeM pages for newly published tenders.");
     try {
-      const response = await fetch(`${API_BASE}/scrape/new`, { method: "POST" });
-      if (!response.ok) throw new Error(`New tender scrape failed with HTTP ${response.status}`);
+      await apiFetch("/scrape/new", { method: "POST" });
       setMessage("New tender scrape started. Fresh records will appear automatically while it runs.");
       await waitForScrapeToFinish();
       await loadData();
@@ -154,7 +191,7 @@ export default function Home() {
     loadData();
     const timer = window.setInterval(loadData, 15000);
     return () => window.clearInterval(timer);
-  }, [searchUrl]);
+  }, [searchPath]);
 
   return (
     <main style={{ minHeight: "100vh", padding: "32px 20px" }}>
