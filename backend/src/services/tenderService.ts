@@ -310,7 +310,7 @@ export async function getTenderStats() {
       where: { tenderStatus: TenderStatus.LIVE, closingDate: { gte: new Date(), lte: in7Days } },
     }),
     prisma.tender.count({ where: { tenderStatus: TenderStatus.LIVE, keywordMatched: { not: null } } }),
-    prisma.scrapeRun.findFirst({ orderBy: { startedAt: "desc" } }),
+    prisma.scrapeRun.findFirst({ where: { status: "SUCCESS" }, orderBy: { startedAt: "desc" } }),
   ]);
 
   const statedTotalMatch = latestRun?.errorMessage?.match(/GeM stated total:\s*(\d+)/i);

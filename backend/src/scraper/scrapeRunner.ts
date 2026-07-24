@@ -6,6 +6,20 @@ import { TenderStatus } from "@prisma/client";
 
 let scrapeInProgress = false;
 
+export async function markInterruptedScrapes() {
+  const result = await prisma.scrapeRun.updateMany({
+    where: { status: "RUNNING" },
+    data: {
+      status: "FAILED",
+      finishedAt: new Date(),
+      errorMessage: "Interrupted before completion. Start a new scrape to refresh GeM totals.",
+    },
+  });
+  if (result.count > 0) {
+    logger.warn(`[scrapeRunner] Marked ${result.count} interrupted scrape run(s) as failed`);
+  }
+}
+
 export interface ScrapeResult {
   runId: string;
   status: "SUCCESS" | "FAILED";
@@ -29,6 +43,7 @@ export async function runScrape(options: RunScrapeOptions = {}): Promise<ScrapeR
   }
 
   scrapeInProgress = true;
+  await markInterruptedScrapes();
   const run = await prisma.scrapeRun.create({ data: { status: "RUNNING" } });
 
   try {

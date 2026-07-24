@@ -13,10 +13,12 @@ import scrapeRoutes from "./routes/scrape";
 import crawlRoutes from "./routes/crawl";
 import { notFoundHandler, errorHandler } from "./middleware/errorHandler";
 import { startScheduler } from "./scraper/scheduler";
+import { markInterruptedScrapes } from "./scraper/scrapeRunner";
 
 async function main() {
   await connectDb();
   logger.info("Connected to PostgreSQL");
+  await markInterruptedScrapes();
 
   const app = express();
 
