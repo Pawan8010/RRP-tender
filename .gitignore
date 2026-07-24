@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .next/
+.next-old-*/
 .env
 .env.local
 *.log
@@ -14,4 +15,3 @@ start-backend.bat
 start-backend.ps1
 start-frontend.bat
 start-frontend.ps1
-
